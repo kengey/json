@@ -1,7 +1,7 @@
 /*
     __ _____ _____ _____
  __|  |   __|     |   | |  JSON for Modern C++ (test suite)
-|  |  |__   |  |  | | | |  version 3.7.0
+|  |  |__   |  |  | | | |  version 3.8.0
 |_____|_____|_____|_|___|  https://github.com/nlohmann/json
 
 Licensed under the MIT License <http://opensource.org/licenses/MIT>.
@@ -42,6 +42,7 @@ using nlohmann::json;
 #include <sstream>
 #include <list>
 #include <cstdio>
+#include <test_data.hpp>
 
 #if (defined(__cplusplus) && __cplusplus >= 201703L) || (defined(_HAS_CXX17) && _HAS_CXX17 == 1) // fix for issue #464
     #define JSON_HAS_CPP_17
@@ -107,7 +108,7 @@ struct foo_serializer < T, typename std::enable_if < !std::is_same<foo, T>::valu
 }
 
 using foo_json = nlohmann::basic_json<std::map, std::vector, std::string, bool, std::int64_t,
-      std::uint64_t, double, std::allocator, ns::foo_serializer>;
+      std::uint64_t, double, std::allocator, ns::foo_serializer, std::vector<std::uint8_t>>;
 
 /////////////////////////////////////////////////////////////////////
 // for #805
@@ -159,12 +160,55 @@ bool operator==(Data const& lhs, Data const& rhs)
 
 using float_json = nlohmann::basic_json<std::map, std::vector, std::string, bool, std::int64_t, std::uint64_t, float>;
 
+/////////////////////////////////////////////////////////////////////
+// for #1647
+/////////////////////////////////////////////////////////////////////
+namespace
+{
+struct NonDefaultFromJsonStruct { };
+
+inline bool operator== (NonDefaultFromJsonStruct const&, NonDefaultFromJsonStruct const&)
+{
+    return true;
+}
+
+enum class for_1647 { one, two };
+
+NLOHMANN_JSON_SERIALIZE_ENUM(for_1647,
+{
+    {for_1647::one, "one"},
+    {for_1647::two, "two"},
+})
+}
+
+namespace nlohmann
+{
+template <>
+struct adl_serializer<NonDefaultFromJsonStruct>
+{
+    static NonDefaultFromJsonStruct from_json (json const&) noexcept
+    {
+        return {};
+    }
+};
+}
+
+/////////////////////////////////////////////////////////////////////
+// for #1805
+/////////////////////////////////////////////////////////////////////
+
+struct NotSerializableData
+{
+    int mydata;
+    float myfloat;
+};
+
 
 TEST_CASE("regression tests")
 {
     SECTION("issue #60 - Double quotation mark is not parsed correctly")
     {
-        SECTION("escape_dobulequote")
+        SECTION("escape_doublequote")
         {
             auto s = "[\"\\\"foo\\\"\"]";
             json j = json::parse(s);
@@ -420,6 +464,11 @@ TEST_CASE("regression tests")
         s2 = o["name"];
 
         CHECK(s2 == "value");
+
+        // improve coverage
+        o["int"] = 1;
+        CHECK_THROWS_AS(s2 = o["int"], json::type_error);
+        CHECK_THROWS_WITH(s2 = o["int"], "[json.exception.type_error.302] type must be string, but is number");
     }
 
     SECTION("issue #146 - character following a surrogate pair is skipped")
@@ -659,8 +708,8 @@ TEST_CASE("regression tests")
     {
         for (auto filename :
                 {
-                    "test/data/regression/broken_file.json",
-                    "test/data/regression/working_file.json"
+                    TEST_DATA_DIRECTORY "/regression/broken_file.json",
+                    TEST_DATA_DIRECTORY "/regression/working_file.json"
                 })
         {
             CAPTURE(filename)
@@ -674,10 +723,10 @@ TEST_CASE("regression tests")
     {
         for (auto filename :
                 {
-                    "test/data/regression/floats.json",
-                    "test/data/regression/signed_ints.json",
-                    "test/data/regression/unsigned_ints.json",
-                    "test/data/regression/small_signed_ints.json"
+                    TEST_DATA_DIRECTORY "/regression/floats.json",
+                    TEST_DATA_DIRECTORY "/regression/signed_ints.json",
+                    TEST_DATA_DIRECTORY "/regression/unsigned_ints.json",
+                    TEST_DATA_DIRECTORY "/regression/small_signed_ints.json"
                 })
         {
             CAPTURE(filename)
@@ -1427,7 +1476,7 @@ TEST_CASE("regression tests")
                 | std::ios_base::badbit
             ); // handle different exceptions as 'file not found', 'permission denied'
 
-            is.open("test/data/regression/working_file.json");
+            is.open(TEST_DATA_DIRECTORY "/regression/working_file.json");
             json _;
             CHECK_NOTHROW(_ = nlohmann::json::parse(is));
         }
@@ -1440,7 +1489,7 @@ TEST_CASE("regression tests")
                 | std::ios_base::badbit
             ); // handle different exceptions as 'file not found', 'permission denied'
 
-            is.open("test/data/json_nlohmann_tests/all_unicode.json.cbor",
+            is.open(TEST_DATA_DIRECTORY "/json_nlohmann_tests/all_unicode.json.cbor",
                     std::ios_base::in | std::ios_base::binary);
             json _;
             CHECK_NOTHROW(_ = nlohmann::json::from_cbor(is));
@@ -1739,31 +1788,37 @@ TEST_CASE("regression tests")
     {
         SECTION("a bunch of -1, ensure_ascii=true")
         {
+            const auto length = 300;
+
             json dump_test;
-            std::vector<char> data(300, -1);
-            std::vector<std::string> vec_string(300, "\\ufffd");
-            std::string s{data.data(), data.size()};
-            dump_test["1"] = s;
-            std::ostringstream os;
-            os << "{\"1\":\"";
-            std::copy( vec_string.begin(), vec_string.end(), std::ostream_iterator<std::string>(os));
-            os << "\"}";
-            s = dump_test.dump(-1, ' ', true, nlohmann::json::error_handler_t::replace);
-            CHECK(s == os.str());
+            dump_test["1"] = std::string(length, -1);
+
+            std::string expected = "{\"1\":\"";
+            for (int i = 0; i < length; ++i)
+            {
+                expected += "\\ufffd";
+            }
+            expected += "\"}";
+
+            auto s = dump_test.dump(-1, ' ', true, nlohmann::json::error_handler_t::replace);
+            CHECK(s == expected);
         }
         SECTION("a bunch of -2, ensure_ascii=false")
         {
+            const auto length = 500;
+
             json dump_test;
-            std::vector<char> data(500, -2);
-            std::vector<std::string> vec_string(500, "\xEF\xBF\xBD");
-            std::string s{data.data(), data.size()};
-            dump_test["1"] = s;
-            std::ostringstream os;
-            os << "{\"1\":\"";
-            std::copy( vec_string.begin(), vec_string.end(), std::ostream_iterator<std::string>(os));
-            os << "\"}";
-            s = dump_test.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-            CHECK(s == os.str());
+            dump_test["1"] = std::string(length, -2);
+
+            std::string expected = "{\"1\":\"";
+            for (int i = 0; i < length; ++i)
+            {
+                expected += "\xEF\xBF\xBD";
+            }
+            expected += "\"}";
+
+            auto s = dump_test.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+            CHECK(s == expected);
         }
         SECTION("test case in issue #1445")
         {
@@ -1801,6 +1856,94 @@ TEST_CASE("regression tests")
     {
         json j = json::parse("[-9223372036854775808]");
         CHECK(j.dump() == "[-9223372036854775808]");
+    }
+
+    SECTION("issue #1708 - minimum value of int64_t can be outputted")
+    {
+        constexpr auto smallest = (std::numeric_limits<int64_t>::min)();
+        json j = smallest;
+        CHECK(j.dump() == std::to_string(smallest));
+    }
+
+    SECTION("issue #1727 - Contains with non-const lvalue json_pointer picks the wrong overload")
+    {
+        json j = {{"root", {{"settings", {{"logging", true}}}}}};
+
+        auto jptr1 = "/root/settings/logging"_json_pointer;
+        auto jptr2 = json::json_pointer{"/root/settings/logging"};
+
+        CHECK(j.contains(jptr1));
+        CHECK(j.contains(jptr2));
+    }
+
+    SECTION("issue #1647 - compile error when deserializing enum if both non-default from_json and non-member operator== exists for other type")
+    {
+        {
+            json j;
+            NonDefaultFromJsonStruct x = j;
+            NonDefaultFromJsonStruct y;
+            CHECK(x == y);
+        }
+
+        auto val = nlohmann::json("one").get<for_1647>();
+        CHECK(val == for_1647::one);
+        json j = val;
+    }
+
+    SECTION("issue #1715 - json::from_cbor does not respect allow_exceptions = false when input is string literal")
+    {
+        SECTION("string literal")
+        {
+            json cbor = json::from_cbor("B", true, false);
+            CHECK(cbor.is_discarded());
+        }
+
+        SECTION("string array")
+        {
+            const char input[] = { 'B', 0x00 };
+            json cbor = json::from_cbor(input, true, false);
+            CHECK(cbor.is_discarded());
+        }
+
+        SECTION("std::string")
+        {
+            json cbor = json::from_cbor(std::string("B"), true, false);
+            CHECK(cbor.is_discarded());
+        }
+    }
+
+    SECTION("issue #1805 - A pair<T1, T2> is json constructible only if T1 and T2 are json constructible")
+    {
+        static_assert(!std::is_constructible<json, std::pair<std::string, NotSerializableData>>::value, "");
+        static_assert(!std::is_constructible<json, std::pair<NotSerializableData, std::string>>::value, "");
+        static_assert(std::is_constructible<json, std::pair<int, std::string>>::value, "");
+    }
+    SECTION("issue #1825 - A tuple<Args..> is json constructible only if all T in Args are json constructible")
+    {
+        static_assert(!std::is_constructible<json, std::tuple<std::string, NotSerializableData>>::value, "");
+        static_assert(!std::is_constructible<json, std::tuple<NotSerializableData, std::string>>::value, "");
+        static_assert(std::is_constructible<json, std::tuple<int, std::string>>::value, "");
+    }
+
+    SECTION("issue #1983 - JSON patch diff for op=add formation is not as per standard (RFC 6902)")
+    {
+        const auto source = R"({ "foo": [ "1", "2" ] })"_json;
+        const auto target = R"({"foo": [ "1", "2", "3" ]})"_json;
+        const auto result = json::diff(source, target);
+        CHECK(result.dump() == R"([{"op":"add","path":"/foo/-","value":"3"}])");
+    }
+
+    SECTION("issue #2067 - cannot serialize binary data to text JSON")
+    {
+        const unsigned char data[] = {0x81, 0xA4, 0x64, 0x61, 0x74, 0x61, 0xC4, 0x0F, 0x33, 0x30, 0x30, 0x32, 0x33, 0x34, 0x30, 0x31, 0x30, 0x37, 0x30, 0x35, 0x30, 0x31, 0x30};
+        json j = json::from_msgpack(data, sizeof(data) / sizeof(data[0]));
+        CHECK_NOTHROW(
+            j.dump(4,                              // Indent
+                   ' ',                            // Indent char
+                   false,                          // Ensure ascii
+                   json::error_handler_t::strict  // Error
+                  )
+        );
     }
 }
 

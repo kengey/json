@@ -1,9 +1,9 @@
 #pragma once
 
-#include <ciso646> // not
 #include <iterator> // iterator, random_access_iterator_tag, bidirectional_iterator_tag, advance, next
 #include <type_traits> // conditional, is_const, remove_const
 
+#include <nlohmann/detail/boolean_operators.hpp>
 #include <nlohmann/detail/exceptions.hpp>
 #include <nlohmann/detail/iterators/internal_iterator.hpp>
 #include <nlohmann/detail/iterators/primitive_iterator.hpp>
@@ -121,8 +121,8 @@ class iter_impl
     /*!
     @brief const copy constructor
     @param[in] other const iterator to copy from
-    @note This copy constuctor had to be defined explicitely to circumvent a bug
-          occuring on msvc v19.0 compiler (VS 2015) debug build. For more
+    @note This copy constructor had to be defined explicitly to circumvent a bug
+          occurring on msvc v19.0 compiler (VS 2015) debug build. For more
           information refer to: https://github.com/nlohmann/json/issues/1608
     */
     iter_impl(const iter_impl<const BasicJsonType>& other) noexcept
